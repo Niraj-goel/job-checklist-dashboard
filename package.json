@@ -1,0 +1,15 @@
+{
+  "name": "job-checklist-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Alcove Job Checklist dashboard, served live from the checklist workbook in Google Drive",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build-page": "node build-page.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
