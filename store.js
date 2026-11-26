@@ -4,6 +4,8 @@
 //   Settings   – Key / Value: AsOf, Source
 //   State      – shared changes made on the dashboard, as JSON. Written by this server only; do not edit.
 //   Change Log – the same changes as readable rows. Rewritten on every save.
+//   Requests   – makers' change requests and the checker's decisions, as readable rows. Rewritten on every save.
+// State also holds the dashboard's users (password hashes only) and the change requests.
 // Any other sheet (e.g. Archive) is kept as it is.
 //
 // The server holds the shared changes in memory, answers the page from memory, and writes them back to the
@@ -25,6 +27,16 @@ const LOG_COLS = [
   ["Maker", "maker"], ["Checker", "checker"], ["Source", "source"], ["Undone", "undone"], ["Task Id", "id"],
 ];
 const FREQ_NAME = {D: "Daily", W: "Weekly", M: "Monthly", Y: "Yearly"};
+const RQ_COLS = ["Request", "Submitted at", "Requested by", "Email", "Type", "Lines", "Summary", "Status", "Decided at",
+  "Decided by", "Checker remark", "Change Ref", "Applied", "Skipped"];
+
+function requestRows(docs) {
+  const L = Object.keys(docs).filter(p => p.startsWith("rq/")).map(p => docs[p]).filter(Boolean)
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  return [RQ_COLS].concat(L.map(r => [r.ref || r.id, r.at || "", (r.by && r.by.name) || "", (r.by && r.by.email) || "", r.kind || "",
+    (r.entries || []).length, r.summary || "", r.status || "", r.decidedAt || "", (r.decidedBy && r.decidedBy.name) || "",
+    r.remark || "", (r.result && r.result.batch) || "", r.result ? r.result.ok : "", r.result ? (r.result.skipped || []).length : ""]));
+}
 
 function backendFor({fileId, localFile}) {
   if (localFile) return {   // for testing without Drive
@@ -146,6 +158,7 @@ function createStore(opts) {
       source = readSource(wb, m.name);
       setSheet(wb, "State", stateRows(docs, docs["meta/info"] || {}), [40, 60]);
       setSheet(wb, "Change Log", logRows(docs), LOG_COLS.map(([h]) => h === "Task" ? 60 : Math.max(12, h.length + 2)));
+      setSheet(wb, "Requests", requestRows(docs), RQ_COLS.map(h => h === "Summary" ? 70 : Math.max(12, h.length + 2)));
       const out = XLSX.write(wb, {type: "buffer", bookType: "xlsx", cellStyles: true, compression: true, bookSST: true});
       const r = await backend.upload(out);
       book.buf = out; book.modifiedTime = r.modifiedTime || book.modifiedTime;
@@ -177,10 +190,15 @@ function createStore(opts) {
       return Object.keys(docs).filter(p => p.startsWith(name + "/")).sort().map(p => ({id: p.slice(name.length + 1), data: docs[p]}));
     },
     async set(path, body) { await ensureLoaded(); docs[path] = body; seq++; schedule(); },
+    // Server-side documents (users, requests). The page's db API never reaches these.
+    async getDoc(path) { await ensureLoaded(); return docs[path] === undefined ? null : JSON.parse(JSON.stringify(docs[path])); },
+    async setDoc(path, body) { await ensureLoaded(); docs[path] = body; seq++; schedule(); },
+    async listDocs(prefix) { await ensureLoaded(); return Object.keys(docs).filter(p => p.startsWith(prefix)).sort().map(p => docs[p]); },
+    async rawDoc(path) { await ensureLoaded(); return docs[path] === undefined ? null : docs[path]; },
     async remove(path) { await ensureLoaded(); if (path in docs) { delete docs[path]; seq++; schedule(); } },
     size: () => JSON.stringify(docs).length,
     async flushNow() { clearTimeout(timer); if (book && seq !== savedSeq) await flush(); },
   };
 }
 
-module.exports = {createStore, readSource, readState, logRows};
+module.exports = {createStore, readSource, readState, logRows, requestRows};

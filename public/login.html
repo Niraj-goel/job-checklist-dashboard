@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Checklist – Sign in</title>
+<style>
+:root{--bg:#f4f5f7;--surface:#fff;--ink:#14181f;--ink-2:#4b5361;--line:#d3d8de;--brand:#1d2b4f;--accent:#c8962e;--bad:#b42318;--bad-bg:#fde7e5;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--surface:#1a1d21;--ink:#eef0f3;--ink-2:#c0c6cf;--line:#3a4048;--brand:#86b6ef;--accent:#d9a640;--bad:#ff8a80;--bad-bg:#3d1f1d;color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif}
+body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px}
+form{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--line);border-top:4px solid var(--accent);border-radius:8px;padding:28px 26px}
+h1{margin:0 0 2px;font-size:19px}
+p{margin:0 0 20px;color:var(--ink-2)}
+label{display:block;font-weight:600;margin:0 0 14px}
+input{display:block;width:100%;margin-top:5px;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:inherit;font:inherit}
+input:focus-visible,button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+button{width:100%;margin-top:6px;padding:10px;border:0;border-radius:6px;background:#1d2b4f;color:#fff;font:inherit;font-weight:600;cursor:pointer}
+button:disabled{opacity:.6;cursor:wait}
+.err{display:none;margin:0 0 14px;padding:8px 10px;border-radius:6px;background:var(--bad-bg);color:var(--bad);border:1px solid var(--bad)}
+.note{font-size:12.5px;color:var(--ink-2);margin:-6px 0 14px}
+a{color:inherit}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<form id="fIn" autocomplete="on">
+  <h1>Alcove – Job Report Checklist</h1>
+  <p>Sign in with your office email</p>
+  <div class="err" id="errIn" role="alert"></div>
+  <label>Email<input name="email" type="email" id="email" autocomplete="username" required autofocus placeholder="name@alcoverealty.in"></label>
+  <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+  <button id="goIn">Sign in</button>
+  <div class="note" style="margin:14px 0 0">Forgot your password? Ask the dashboard admin to reset it.</div>
+</form>
+<form id="fCh" hidden autocomplete="on">
+  <h1>Set your own password</h1>
+  <p>You signed in with a temporary password. Choose your own before continuing.</p>
+  <div class="err" id="errCh" role="alert"></div>
+  <input type="email" name="username" id="chUser" autocomplete="username" hidden>
+  <label>Temporary password<input name="current" type="password" autocomplete="current-password" required></label>
+  <label>New password<input name="next" type="password" autocomplete="new-password" required minlength="8"></label>
+  <div class="note">At least 8 characters.</div>
+  <label>Repeat new password<input name="again" type="password" autocomplete="new-password" required minlength="8"></label>
+  <button id="goCh">Save and continue</button>
+  <div class="note" style="margin:14px 0 0"><a href="#" id="out">Sign out</a></div>
+</form>
+<script>
+// The dashboard address must end with "/" so that its relative links (api/…) resolve inside its folder.
+if (!location.pathname.endsWith("/") && !/\.html$/.test(location.pathname)) location.replace(location.pathname + "/" + location.search);
+const $ = id => document.getElementById(id);
+const post = async (url, body) => {
+  const res = await fetch(url, {method: "POST", headers: {"content-type": "application/json"}, credentials: "same-origin", body: JSON.stringify(body)});
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(j.error || `Failed (${res.status})`);
+  return j;
+};
+function showChange(email) { $("fIn").hidden = true; $("fCh").hidden = false; $("chUser").value = email || ""; $("fCh").current.focus(); }
+fetch("api/me", {credentials: "same-origin", cache: "no-store"}).then(r => r.ok ? r.json() : null).then(m => { if (m && m.mustChange) showChange(m.email); }).catch(() => {});
+$("fIn").onsubmit = async ev => {
+  ev.preventDefault();
+  const f = ev.target, err = $("errIn"), go = $("goIn");
+  go.disabled = true; err.style.display = "none";
+  try {
+    const j = await post("login", {email: f.email.value.trim(), password: f.password.value});
+    if (j.mustChange) { const pw = f.password.value; showChange(f.email.value.trim()); $("fCh").current.value = pw; $("fCh").next.focus(); }
+    else location.reload();
+  } catch (e) { err.textContent = e.message; err.style.display = "block"; f.password.value = ""; f.password.focus(); }
+  finally { go.disabled = false; }
+};
+$("fCh").onsubmit = async ev => {
+  ev.preventDefault();
+  const f = ev.target, err = $("errCh"), go = $("goCh");
+  err.style.display = "none";
+  if (f.next.value !== f.again.value) { err.textContent = "The two new passwords are not the same."; err.style.display = "block"; return; }
+  go.disabled = true;
+  try { await post("password", {current: f.current.value, next: f.next.value}); location.reload(); }
+  catch (e) { err.textContent = e.message; err.style.display = "block"; }
+  finally { go.disabled = false; }
+};
+$("out").onclick = ev => { ev.preventDefault(); fetch("logout", {credentials: "same-origin"}).finally(() => location.reload()); };
+</script>
+</body>
+</html>

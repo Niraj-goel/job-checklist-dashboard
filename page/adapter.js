@@ -12,6 +12,7 @@
     const res = await fetch(url, {method, credentials: 'same-origin', cache: 'no-store',
       headers: body !== undefined ? {'content-type': 'application/json'} : {}, body: body !== undefined ? JSON.stringify(body) : undefined});
     let j = null; try { j = await res.json(); } catch(e) {}
+    if (res.status === 401 || (j && j.code === 'must_change')) { location.reload(); throw apiErr(res, j); }
     if (!res.ok) throw apiErr(res, j);
     return j;
   }
@@ -21,7 +22,7 @@
   const listeners = [];
   async function poll(){
     try {
-      const m = await call('GET', '/api/db/meta');
+      const m = await call('GET', 'api/db/meta');
       window.__CHECKLIST_STATUS = m;
       if (m.ver && window.__CHECKLIST_VER && m.ver !== window.__CHECKLIST_VER && !verWarned) {
         verWarned = true;
@@ -40,8 +41,8 @@
   const DB = {
     doc(p){
       return {
-        set: body => call('PUT', '/api/db/doc?path=' + encodeURIComponent(p), body),
-        delete: () => call('DELETE', '/api/db/doc?path=' + encodeURIComponent(p)),
+        set: body => call('PUT', 'api/db/doc?path=' + encodeURIComponent(p), body),
+        delete: () => call('DELETE', 'api/db/doc?path=' + encodeURIComponent(p)),
         onSnapshot(next, error){
           if (p !== 'meta/info') throw new Error('Only meta/info can be watched');
           const l = {next, error}; listeners.push(l);
@@ -52,7 +53,7 @@
       };
     },
     collection(c){
-      return {get: async () => ({docs: (await call('GET', '/api/db/collection?c=' + encodeURIComponent(c))).docs.map(d => snapOf(d.id, d.data))})};
+      return {get: async () => ({docs: (await call('GET', 'api/db/collection?c=' + encodeURIComponent(c))).docs.map(d => snapOf(d.id, d.data))})};
     }
   };
   const USER = {can: async () => !!window.__CHECKLIST_CAN_WRITE};
