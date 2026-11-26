@@ -68,6 +68,17 @@ The server listens on `PORT` (default 3000) and answers `/healthz` for health ch
 
 `node seed-users.js people.csv` adds everyone in the CSV (`name,email,admin,scope,active`) who is not on the list yet. It writes their temporary passwords to `temp-passwords.csv`. Run it **only while no server is running** against the workbook. Once the dashboard is live, use the Access tab instead. Never commit either CSV.
 
+## Loading a new checklist (task data)
+
+The live tasks come from the `Master` sheet, not from the HTML file. When a newer stand-alone dashboard HTML arrives with new data:
+
+```
+node load-master.js "C:\Users\NIRAJ\Downloads\Job_Checklist_Dashboard_NEW.html"           (dry run: shows the difference)
+node load-master.js "C:\Users\NIRAJ\Downloads\Job_Checklist_Dashboard_NEW.html" --write   (replaces Master, Doers, AsOf, Source)
+```
+
+Users, requests, approved changes and the other sheets are kept. Open pages offer *"The checklist was updated in Drive – reload"* within a minute. Approved changes made on the old version can then be re-applied by the checker.
+
 ## Updating the page
 
 The page is built from the stand-alone dashboard HTML. When you get a newer version of that file:
