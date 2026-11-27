@@ -75,4 +75,13 @@ const upload = (id, bytes, mimeType) => api(
 const copy = (id, name, parents) => api(`${DRIVE}${id}/copy?supportsAllDrives=true&fields=id,name,webViewLink`,
   {method: "POST", type: "application/json", body: JSON.stringify(parents ? {name, parents} : {name})});
 
-module.exports = {accessToken, meta, download, upload, copy, clientEmail: () => loadKey().client_email};
+// Marks the file's current version "Keep forever" in Drive's version history, so Drive never purges it.
+// Works without any new file (a service account cannot own files outside a shared drive). Drive allows 200 per file.
+async function keepRevision(id) {
+  const f = await api(`${DRIVE}${id}?supportsAllDrives=true&fields=headRevisionId,modifiedTime`);
+  if (!f.headRevisionId) throw new Error("Drive did not return the current version");
+  await api(`${DRIVE}${id}/revisions/${f.headRevisionId}`, {method: "PATCH", type: "application/json", body: JSON.stringify({keepForever: true})});
+  return {id: f.headRevisionId, modifiedTime: f.modifiedTime};
+}
+
+module.exports = {accessToken, meta, download, upload, copy, keepRevision, clientEmail: () => loadKey().client_email};

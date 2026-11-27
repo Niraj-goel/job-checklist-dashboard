@@ -1982,7 +1982,7 @@ $('#fileIn').addEventListener('change',e=>{const f=e.target.files[0];if(f)readWo
   <div class="card"><div class="tbl-wrap"><table class="dt" id="reqTbl"></table></div></div>
 </section>
 <section class="tab" id="tab-data">
-  <div class="notice">Everything this dashboard holds is kept in <b>one Google Drive file</b>. The server loads it from Drive when it starts, writes every change back within a few seconds, and copies the whole file once a day (and before every checklist upload) into the same Drive folder. Nothing is ever deleted: removed people stay on file, reversed changes stay in the Change Log, and Drive keeps every version (File → Version history).</div>
+  <div class="notice">Everything this dashboard holds is kept in <b>one Google Drive file</b>. The server loads it from Drive when it starts, writes every change back within a few seconds, and once a day (and before every checklist upload) marks the current version <b>Keep forever</b> in Drive's version history. Nothing is ever deleted: removed people stay on file, reversed changes stay in the Change Log, and every saved version can be opened or restored in Drive (File → Version history).</div>
   <div class="card"><div class="card-h"><div class="grow"><h2>The Drive file</h2><div class="cap">Live status of the workbook this dashboard runs on.</div></div>
     <button class="btn" id="dReload" title="Read the workbook from Drive again now (after editing it in Drive)">Reload from Drive now</button>
     <label class="btn primary" id="dUpBtn" title="Replace the checklist (Master) with a new file">Upload new checklist<input type="file" id="dUp" accept=".xlsx,.xlsm,.html,.htm" hidden></label></div>
@@ -2594,14 +2594,14 @@ $('#fileIn').addEventListener('change',e=>{const f=e.target.files[0];if(f)readWo
     catch (e) { return showMsg('Cannot use this file', '<p>' + esc(e.message) + '</p>'); }
     const f = o => ['Daily', 'Weekly', 'Monthly', 'Yearly'].map(k => k + ' ' + fmtN(o[k])).join(' · ');
     const msg = 'Replace the checklist in Drive with "' + file.name + '"?\n\nNow: as of ' + (dry.nowAsof || '—') + ' · ' + fmtN(dry.nowTasks) + ' tasks (' + f(dry.now) + ')\nNew: as of ' + (dry.asof || '—') + ' · ' + fmtN(dry.tasks) + ' tasks (' + f(dry.next) + ')\n\n' +
-      'A copy of the current workbook is saved in the same Drive folder first. Users, requests, the change log and the audit log are kept.' +
+      'The current version is kept forever in Drive’s version history first. Users, requests, the change log and the audit log are kept.' +
       (dry.approvedChanges ? ' ' + dry.approvedChanges + ' approved change record(s) belong to the current version; after the upload you will be offered to re-apply them.' : '');
     if (!(await askConfirm(msg, 'Upload to Drive'))) return;
     const btn = $('#dUpBtn'); btn.disabled = true; toast('Uploading to Drive…');
     try {
       const r = await api('POST', 'api/data/checklist', payload);
       DATA = r.file; renderData();
-      showMsg('Checklist uploaded', '<p>The checklist as of <b>' + esc(r.asof) + '</b> (' + fmtN(r.tasks) + ' tasks) is now in Drive. A copy of the previous workbook was saved first.</p><p>Reload the page to work on the new version. Everyone else sees “The checklist was updated in Drive – reload”.</p>');
+      showMsg('Checklist uploaded', '<p>The checklist as of <b>' + esc(r.asof) + '</b> (' + fmtN(r.tasks) + ' tasks) is now in Drive. The previous version is kept forever in Drive’s version history (File → Version history).</p><p>Reload the page to work on the new version. Everyone else sees “The checklist was updated in Drive – reload”.</p>');
     } catch (e) { showMsg('Upload failed', '<p>' + esc(e.message) + '</p><p class="muted small">Nothing was replaced.</p>'); }
     finally { btn.disabled = false; }
   }

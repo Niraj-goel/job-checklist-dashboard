@@ -47,7 +47,7 @@ function backendFor({fileId, localFile}) {
     upload: async bytes => { fs.writeFileSync(localFile, bytes); return {modifiedTime: fs.statSync(localFile).mtime.toISOString()}; },
   };
   return {name: fileId, meta: () => g.meta(fileId), download: () => g.download(fileId), upload: bytes => g.upload(fileId, bytes, MIME),
-    copy: (name, parents) => g.copy(fileId, name, parents)};
+    copy: (name, parents) => g.copy(fileId, name, parents), keep: () => g.keepRevision(fileId)};
 }
 
 const blank = v => v === null || v === undefined || String(v).trim() === "";
@@ -115,12 +115,22 @@ function createStore(opts) {
   const today = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);   // India date
 
   // Copies the workbook as it is in Drive now, before it is overwritten: once a day, and before a new checklist replaces Master.
+  // With BACKUP_FOLDER_ID (a folder in a shared drive, shared with the service account) a full copy is made there;
+  // otherwise the version in Drive's history is marked "Keep forever".
   async function backup(m, why) {
+    if (!opts.backupFolder && backend.keep) {
+      const r = await backend.keep();
+      docs["bk/info"] = {day: why === "daily" ? today() : ((docs["bk/info"] || {}).day || ""), at: new Date().toISOString(), why,
+        name: "Drive version of " + new Date(new Date(r.modifiedTime).getTime() + 5.5 * 3600e3).toISOString().slice(0, 16).replace("T", " ") + " kept forever", id: r.id,
+        link: opts.fileId ? `https://drive.google.com/file/d/${opts.fileId}/view` : ""};
+      seq++;
+      return;
+    }
     if (!backend.copy) return;
     const stamp = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 16).replace("T", " ").replace(":", "");
     const base = String(m.name || "Job Checklist DB.xlsx").replace(/.xlsx$/i, "");
     const name = why === "daily" ? `${base} – backup ${today()}.xlsx` : `${base} – before ${why} ${stamp}.xlsx`;
-    const r = await backend.copy(name, m.parents);
+    const r = await backend.copy(name, opts.backupFolder ? [opts.backupFolder] : m.parents);
     docs["bk/info"] = {day: why === "daily" ? today() : ((docs["bk/info"] || {}).day || ""), at: new Date().toISOString(), name, id: r.id || "", link: r.webViewLink || "", why};
     seq++;
   }

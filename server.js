@@ -20,6 +20,7 @@ const CONFIG = {
   port: +process.env.PORT || 3000,
   fileId: process.env.CHECKLIST_FILE_ID || "1bmgjKdSf6zITxFC6A6omZLQ6pdMi0oma",   // Job Checklist DB.xlsx
   localFile: process.env.CHECKLIST_LOCAL_FILE || "",   // testing only: use a local .xlsx instead of Drive
+  backupFolder: process.env.BACKUP_FOLDER_ID || "",    // optional: shared-drive folder for daily full copies
 };
 const MAX_DOC = 1_000_000, MAX_TOTAL = 25_000_000;
 const DOC_PATH = /^(meta\/info|st\/c\d{3}|lg\/c\d{3})$/;
@@ -338,7 +339,7 @@ async function handle(req, res) {
         nowAsof: cur.asof, nowTasks: cur.master.length - 1, approvedChanges: approved};
       if (b.dry) return json(res, 200, {dry: true, ...summary});
       await store.replaceMaster(c);
-      await audit(me, "New checklist uploaded", `${c.source || "file"} · as of ${c.asof} · ${c.rows.length - 1} tasks (was ${cur.master.length - 1}, as of ${cur.asof}) · previous workbook copied in Drive first`);
+      await audit(me, "New checklist uploaded", `${c.source || "file"} · as of ${c.asof} · ${c.rows.length - 1} tasks (was ${cur.master.length - 1}, as of ${cur.asof}) · previous version kept forever in Drive`);
       return json(res, 200, {ok: true, ...summary, file: await store.fileInfo()});
     }
   }
