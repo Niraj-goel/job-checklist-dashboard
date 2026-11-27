@@ -1,0 +1,32 @@
+{
+ "changes": [
+  {
+   "at": "2026-11-27T08:14:13.642Z",
+   "summary": "Last updated line now shows what changed"
+  },
+  {
+   "at": "2026-11-27T13:22:17+05:30",
+   "summary": "Show the last code update time in both dashboards' headers"
+  },
+  {
+   "at": "2026-11-27T11:22:55+05:30",
+   "summary": "Back up by keeping Drive versions forever; service accounts cannot create files"
+  },
+  {
+   "at": "2026-11-27T11:13:19+05:30",
+   "summary": "Keep everything in the Drive workbook: readable sheets, audit log, backups"
+  },
+  {
+   "at": "2026-11-26T19:33:11+05:30",
+   "summary": "Add load-master.js to load a new checklist into the Master sheet from a dashboard HTML"
+  },
+  {
+   "at": "2026-11-26T18:14:10+05:30",
+   "summary": "Add email sign-in, maker-checker requests and access matrix to Job Checklist"
+  },
+  {
+   "at": "2026-11-22T19:10:36+05:30",
+   "summary": "Add live Job Checklist dashboard for Render"
+  }
+ ]
+}

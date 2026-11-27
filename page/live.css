@@ -81,3 +81,5 @@ table.dt th.srt[data-dir="-1"]::after{content:' ▼'}
   #accTbl input.nm,#accTbl input.em{width:auto}
   a{color:#000;text-decoration:none}
 }
+#lastUpd details.lu{display:inline}#lastUpd details.lu summary{display:inline;cursor:pointer;text-decoration:underline}
+#lastUpd details.lu[open] ul{margin:6px 0 0;padding-left:18px;max-height:220px;overflow:auto}#lastUpd details.lu li span{opacity:.75;margin-right:6px}

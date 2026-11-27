@@ -855,8 +855,13 @@
   }
   if (hdrMeta && !$('#lastUpd')) {
     const u = document.createElement('div'); u.id = 'lastUpd'; u.hidden = true; hdrMeta.appendChild(u);
-    fetch('version', {cache: 'no-store'}).then(r => r.json()).then(v => { if (!v.time) return;
-      u.textContent = 'Last updated: ' + fmtDT(v.time) + (v.commit ? ' (version ' + v.commit + ')' : ''); u.hidden = false; }).catch(() => {});
+    fetch("version", {cache: "no-store"}).then(r => r.json()).then(v => { if (!v.time) return;
+    const el = u, f = t => new Date(t).toLocaleString("en-IN", {day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"});
+    const e = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
+    const ch = v.changes || [];
+    el.innerHTML = "Last updated: <b>" + f(v.time) + "</b>" + (ch[0] ? " – " + e(ch[0].summary) : "") +
+      (ch.length ? ' <details class="lu"><summary>What changed</summary><ul>' + ch.map(c => "<li><span>" + f(c.at) + "</span> " + e(c.summary) + "</li>").join("") + "</ul></details>" : "");
+    el.hidden = false; }).catch(() => {});
   }
   setSync('busy', 'Loading checklist…');
   api('GET', 'api/source').then(m => {

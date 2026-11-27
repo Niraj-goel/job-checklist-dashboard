@@ -27,4 +27,10 @@ function fromFiles(dir) {
   return newest ? {time: new Date(newest).toISOString(), commit: "", source: "deploy"} : null;
 }
 
-module.exports = dir => fromGit(dir) || fromFiles(dir) || {time: "", commit: "", source: "unknown"};
+// What changed recently: version.json, written before each commit by stamp-version.js.
+function changes(dir) {
+  try { return (JSON.parse(fs.readFileSync(path.join(dir, "version.json"), "utf8")).changes || []).slice(0, 15); }
+  catch (e) { return []; }
+}
+
+module.exports = dir => ({...(fromGit(dir) || fromFiles(dir) || {time: "", commit: "", source: "unknown"}), changes: changes(dir)});
