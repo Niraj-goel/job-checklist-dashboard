@@ -30,6 +30,7 @@ const LIMITED = new Set(["/api/me", "/password", "/logout"]);   // all a person 
 
 const store = createStore({...CONFIG, extraSheets: (docs, source) => readableSheets(docs, source)});
 const access = createAccess(store);
+const BUILD = require("./buildinfo.js")(__dirname);   // when the code was last updated, shown in the page header
 const file = name => fs.readFileSync(path.join(__dirname, "public", name));
 
 // ---------- helpers ----------
@@ -223,6 +224,7 @@ async function handle(req, res) {
   const url = new URL(req.url, "http://x");
   const p = url.pathname;
   if (p === "/healthz") return send(res, 200, "text/plain", "ok");
+  if (p === "/version") return json(res, 200, BUILD);
   await store.ensureLoaded();
 
   if (p === "/login" && req.method === "POST") {

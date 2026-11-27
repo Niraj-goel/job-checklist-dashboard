@@ -853,6 +853,11 @@
     n.innerHTML = '<a href="#" onclick="location.reload();return false" style="color:inherit;text-decoration:underline">The checklist was updated in Drive – reload</a>';
     hdrMeta.appendChild(n);
   }
+  if (hdrMeta && !$('#lastUpd')) {
+    const u = document.createElement('div'); u.id = 'lastUpd'; u.hidden = true; hdrMeta.appendChild(u);
+    fetch('version', {cache: 'no-store'}).then(r => r.json()).then(v => { if (!v.time) return;
+      u.textContent = 'Last updated: ' + fmtDT(v.time) + (v.commit ? ' (version ' + v.commit + ')' : ''); u.hidden = false; }).catch(() => {});
+  }
   setSync('busy', 'Loading checklist…');
   api('GET', 'api/source').then(m => {
     ME = m.me; PROFILES = m.profiles || [];
