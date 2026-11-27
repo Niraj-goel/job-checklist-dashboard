@@ -22,7 +22,7 @@
   const KIND_NAME = {TRANSFER: 'Transfer', ADD: 'Add', EDIT: 'Edit', DELETE: 'Delete', IMPORT: 'Excel import'};
   const ST_CLS = {pending: 'st warn', approved: 'st good', rejected: 'st bad', cancelled: 'st'};
   const TAB_PERM = {ov: 'tab.ov', wl: 'tab.wl', due: 'tab.due', rep: 'tab.rep', tm: 'tab.tm', log: 'tab.log', dq: 'tab.dq'};
-  const TAB_NAME = {ov: 'Overview', wl: 'Doer Workload', due: 'Due Schedule', rep: 'Management Report', tm: 'Task Master', log: 'Change Log', dq: 'Data Quality', req: 'Requests', acc: 'Access'};
+  const TAB_NAME = {ov: 'Overview', wl: 'Doer Workload', due: 'Due Schedule', rep: 'Management Report', tm: 'Task Master', log: 'Change Log', dq: 'Data Quality', req: 'Requests', acc: 'Access', data: 'Data (Drive)'};
 
   async function api(method, url, body) {
     const res = await fetch(url, {method, credentials: 'same-origin', cache: 'no-store',
@@ -47,9 +47,11 @@
     const nw = $('nav.tabs .wrap');
     nw.insertAdjacentHTML('beforeend', '<button role="tab" data-tab="req" aria-selected="false" id="reqTabBtn">Requests<span class="cnt" id="reqCnt" hidden></span></button>' +
       '<button role="tab" data-tab="acc" aria-selected="false" id="accTabBtn" hidden>Access</button>' +
+      '<button role="tab" data-tab="data" aria-selected="false" id="dataTabBtn" hidden>Data (Drive)</button>' +
       '<span class="navsp"></span><button class="btn sm" id="printBtn" title="Print this tab (A4 landscape)">Print this tab</button>');
     $('#reqTabBtn').addEventListener('click', () => { showTab('req'); renderReqs(); });
     $('#accTabBtn').addEventListener('click', () => { showTab('acc'); loadAccess(); });
+    $('#dataTabBtn').addEventListener('click', () => { showTab('data'); loadData(); });
     $('#printBtn').addEventListener('click', () => window.print());
     $('#pendBtn').addEventListener('click', () => { showTab('req'); $('#qSt').value = 'pending'; renderReqs(); });
     $('#pwBtn').addEventListener('click', openPw);
@@ -69,6 +71,28 @@
     <button class="btn" id="qXls">Download requests (Excel)</button>
   </div>
   <div class="card"><div class="tbl-wrap"><table class="dt" id="reqTbl"></table></div></div>
+</section>
+<section class="tab" id="tab-data">
+  <div class="notice">Everything this dashboard holds is kept in <b>one Google Drive file</b>. The server loads it from Drive when it starts, writes every change back within a few seconds, and copies the whole file once a day (and before every checklist upload) into the same Drive folder. Nothing is ever deleted: removed people stay on file, reversed changes stay in the Change Log, and Drive keeps every version (File → Version history).</div>
+  <div class="card"><div class="card-h"><div class="grow"><h2>The Drive file</h2><div class="cap">Live status of the workbook this dashboard runs on.</div></div>
+    <button class="btn" id="dReload" title="Read the workbook from Drive again now (after editing it in Drive)">Reload from Drive now</button>
+    <label class="btn primary" id="dUpBtn" title="Replace the checklist (Master) with a new file">Upload new checklist<input type="file" id="dUp" accept=".xlsx,.xlsm,.html,.htm" hidden></label></div>
+    <div id="dataInfo" class="small">Loading…</div>
+  </div>
+  <div class="card"><h2>What is in the file</h2><div class="cap">Sheets marked “you” can be edited in Drive; the dashboard picks the edit up within a minute. The others are written by the dashboard – edit those through the dashboard.</div>
+    <div class="tbl-wrap"><table class="dt"><thead><tr><th>Sheet</th><th>What it holds</th><th>Edited by</th></tr></thead><tbody>
+      <tr><td><b>Master</b></td><td>The checklist as loaded or uploaded: one row per task (Master / import layout)</td><td>you, or <i>Upload new checklist</i></td></tr>
+      <tr><td><b>Doers</b></td><td>List of doers</td><td>you</td></tr>
+      <tr><td><b>Settings</b></td><td>AsOf date and Source file name</td><td>you</td></tr>
+      <tr><td><b>Current Tasks</b></td><td>The checklist as it stands now: Master with every approved transfer, edit, addition and deletion applied (deleted rows kept, marked Deleted)</td><td>dashboard</td></tr>
+      <tr><td><b>Users</b></td><td>Every person, their email ID, status, data scope and ticks, last sign-in (no passwords)</td><td>dashboard (Access tab)</td></tr>
+      <tr><td><b>Requests</b></td><td>Every maker request and the checker's decision</td><td>dashboard</td></tr>
+      <tr><td><b>Change Log</b></td><td>Every approved change with maker, checker and source</td><td>dashboard</td></tr>
+      <tr><td><b>Audit Log</b></td><td>Who did what and when: sign-ins, password changes, access changes, requests, uploads, reloads</td><td>dashboard</td></tr>
+      <tr><td><b>State</b></td><td>The same data in machine form (password hashes only). The dashboard restores itself from this – do not edit</td><td>dashboard</td></tr>
+      <tr><td><b>Archive</b> and others</td><td>Kept as they are</td><td>you</td></tr>
+    </tbody></table></div>
+  </div>
 </section>
 <section class="tab" id="tab-acc">
   <div class="notice">One row per person. Each person gets exactly what is ticked. <b>Data scope</b>: <i>Own</i> = tasks where they are the doer; <i>Team</i> = own plus tasks of people who report to them; <i>All</i> = every task. The <b>name must match the doer name</b> in the checklist, or they will see no tasks. Request ticks let a person send changes for approval; <b>Approve</b> makes them a checker (needs scope All). Admin = everything plus this tab. Changes apply from the person's next page load.</div>
@@ -110,6 +134,8 @@
     $('#rqReject').addEventListener('click', () => rejectCur());
     $('#rqCancel').addEventListener('click', () => cancelCur());
     $('#nAdd').addEventListener('click', addPerson);
+    $('#dReload').addEventListener('click', reloadDrive);
+    $('#dUp').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) uploadChecklist(f); });
     $('#accSave').addEventListener('click', saveAccess);
     $('#accUndo').addEventListener('click', () => { ACC_DIRTY = false; loadAccess(true); });
     $('#accXls').addEventListener('click', () => exportAccess().catch(e => toast('Export failed: ' + e.message)));
@@ -118,6 +144,7 @@
     $('#accTbl').addEventListener('click', e => {
       const r = e.target.closest('[data-reset]'); if (r) return resetPw(r.dataset.reset);
       const d = e.target.closest('[data-del]'); if (d) return delPerson(d.dataset.del);
+      const rs = e.target.closest('[data-restore]'); if (rs) return restorePerson(rs.dataset.restore);
     });
     window.addEventListener('beforeunload', e => { if (ACC_DIRTY) { e.preventDefault(); e.returnValue = ''; } });
   }
@@ -148,6 +175,7 @@
     // tabs
     Object.entries(TAB_PERM).forEach(([t, k]) => { const b = $('nav.tabs button[data-tab="' + t + '"]'); if (b) b.hidden = !can(k); });
     $('#accTabBtn').hidden = !ME.admin;
+    $('#dataTabBtn').hidden = !ME.admin;
     const first = $$('nav.tabs button[data-tab]').find(b => !b.hidden);
     const cur = $('nav.tabs button[aria-selected="true"]');
     if (!cur || cur.hidden) showTab(first ? first.dataset.tab : 'req');
@@ -505,7 +533,12 @@
     let h = '<thead><tr><th rowspan="2">Name</th><th rowspan="2">Email (sign-in ID)</th><th rowspan="2">Active</th><th rowspan="2">Admin</th><th rowspan="2">Data scope</th>' +
       groups.map(g => '<th class="grp" colspan="' + g.n + '">' + esc(g.g) + '</th>').join('') + '<th rowspan="2">Password</th><th rowspan="2">Last sign-in</th><th rowspan="2" class="rq-act"></th></tr><tr>' +
       P.map(p => '<th class="c" title="' + esc(p.note || p.label) + '">' + esc(p.label) + '</th>').join('') + '</tr></thead><tbody>';
-    ACC.users.slice().sort((a, b) => (b.admin - a.admin) || a.name.localeCompare(b.name)).forEach(u => {
+    ACC.users.slice().sort((a, b) => (!!a.removed - !!b.removed) || (b.admin - a.admin) || a.name.localeCompare(b.name)).forEach(u => {
+      if (u.removed) {
+        h += '<tr data-email="' + esc(u.email) + '" data-removed="1" class="off"><td>' + esc(u.name) + '</td><td>' + esc(u.email) + '</td><td colspan="' + (3 + P.length + 2) + '"><span class="st bad">Removed ' + esc(fmtDT(u.removed)) + '</span> <span class="muted small">kept on file · cannot sign in</span></td>' +
+          '<td class="rq-act"><button class="btn sm" data-restore="' + esc(u.email) + '">Restore</button></td></tr>';
+        return;
+      }
       const off = !u.active, nameWarn = !names.has(key(u.name)) ? '<div class="warnx">Not a doer / reviewer name in the checklist</div>' : '';
       h += '<tr data-email="' + esc(u.email) + '" class="' + (off ? 'off' : '') + '">' +
         '<td><input type="text" class="nm" data-f="name" value="' + esc(u.name) + '" list="dlAll" aria-label="Name">' + nameWarn + '</td>' +
@@ -519,7 +552,8 @@
         '<td class="rq-act">' + (key(u.email) === key(ME.email) ? '' : '<button class="btn sm danger" data-del="' + esc(u.email) + '">Remove</button>') + '</td></tr>';
     });
     $('#accTbl').innerHTML = h + '</tbody>';
-    $('#accCap').textContent = ACC.users.length + ' people · ' + ACC.users.filter(u => u.active).length + ' active · ' + ACC.users.filter(u => u.admin).length + ' admin(s)' +
+    const live = ACC.users.filter(u => !u.removed), gone = ACC.users.length - live.length;
+    $('#accCap').textContent = live.length + ' people · ' + live.filter(u => u.active).length + ' active · ' + live.filter(u => u.admin).length + ' admin(s)' + (gone ? ' · ' + gone + ' removed (kept on file)' : '') +
       (ACC.breakGlass ? ' · Break-glass admin sign-in (server setting): ' + ACC.breakGlass : '');
     markDirty(false);
   }
@@ -538,7 +572,7 @@
     markDirty(true);
   }
   async function saveAccess() {
-    const rows = $$('#accTbl tr[data-email]').map(tr => {
+    const rows = $$('#accTbl tr[data-email]:not([data-removed])').map(tr => {
       const g = f => tr.querySelector('[data-f="' + f + '"]');
       const perms = {}; tr.querySelectorAll('[data-p]').forEach(c => { if (c.checked) perms[c.dataset.p] = true; });
       return {email: tr.dataset.email, newEmail: g('email').value.trim(), name: g('name').value.trim(), active: g('active').checked, admin: g('admin').checked, scope: g('scope').value, perms};
@@ -571,9 +605,96 @@
   }
   async function delPerson(email) {
     const u = ACC.users.find(x => x.email === email);
-    if (!(await askConfirm('Remove ' + (u ? u.name : email) + ' (' + email + ')? They can no longer sign in. Their requests stay in the record.', 'Remove'))) return;
-    try { ACC = await api('DELETE', 'api/access/users?email=' + encodeURIComponent(email)); renderAccess(); toast('Removed.'); }
+    if (!(await askConfirm('Remove ' + (u ? u.name : email) + ' (' + email + ')? They can no longer sign in. Nothing is deleted: the person stays on file (Users sheet in Drive) and can be restored.', 'Remove'))) return;
+    try { ACC = await api('DELETE', 'api/access/users?email=' + encodeURIComponent(email)); renderAccess(); toast('Removed – kept on file.'); }
     catch (e) { showMsg('Not removed', '<p>' + esc(e.message) + '</p>'); }
+  }
+  async function restorePerson(email) {
+    try { ACC = await api('POST', 'api/access/restore', {email}); renderAccess(); toast('Restored. They can sign in with their earlier password.'); }
+    catch (e) { showMsg('Not restored', '<p>' + esc(e.message) + '</p>'); }
+  }
+
+  /* ---------- data: the Drive workbook (admins) ---------- */
+  let DATA = null;
+  async function loadData() {
+    if (!ME.admin) return;
+    try { DATA = await api('GET', 'api/data'); renderData(); }
+    catch (e) { $('#dataInfo').innerHTML = '<span class="st bad">Could not read: ' + esc(e.message) + '</span>'; }
+  }
+  function renderData() {
+    const d = DATA, b = d.backup;
+    $('#dataInfo').innerHTML = '<table class="dt"><tbody>' + [
+      ['File', '<b>' + esc(d.name) + '</b>' + (d.link ? ' · <a href="' + esc(d.link) + '" target="_blank" rel="noopener">Open in Google Drive ↗</a>' : '')],
+      ['Checklist', 'as of <b>' + esc(d.asof || '—') + '</b> · ' + fmtN(d.tasks) + ' task rows in Master · source: ' + esc(d.source || '—')],
+      ['Last saved to Drive', (d.savedAt ? fmtDT(d.savedAt) : 'no change saved since the server started') + (d.pending ? ' · <span class="st warn">saving…</span>' : '') + (d.saveError ? ' · <span class="st bad">' + esc(d.saveError) + '</span>' : '')],
+      ['Drive version', fmtDT(d.modifiedTime)],
+      ['Last backup copy', b ? esc(b.name) + ' · ' + fmtDT(b.at) + (b.link ? ' · <a href="' + esc(b.link) + '" target="_blank" rel="noopener">open ↗</a>' : '') : 'none yet – made with the first save of each day']
+    ].map(r => '<tr><td style="width:180px"><b>' + r[0] + '</b></td><td>' + r[1] + '</td></tr>').join('') + '</tbody></table>';
+  }
+  async function reloadDrive() {
+    const btn = $('#dReload'); btn.disabled = true;
+    try { DATA = await api('POST', 'api/data/reload'); renderData(); toast('Reloaded from Drive. Reload this page to see the newest data.'); $('#srcVerNote').hidden = false; }
+    catch (e) { showMsg('Not reloaded', '<p>' + esc(e.message) + '</p>'); }
+    finally { btn.disabled = false; }
+  }
+  // Reads an upload: a dashboard HTML (embedded data), a checklist workbook (Daily/Weekly/Monthly/Yearly Task List
+  // sheets) or a Master / import-layout sheet (header row starting with "Action").
+  function readUpload(file) {
+    return new Promise((resolve, reject) => {
+      const rd = new FileReader();
+      rd.onerror = () => reject(new Error('Could not read the file'));
+      if (/\.html?$/i.test(file.name)) {
+        rd.onload = () => { try {
+          const line = String(rd.result).split(/\r?\n/).find(l => l.startsWith('const SNAP = {'));
+          if (!line) throw new Error('This HTML has no embedded checklist data.');
+          resolve({snap: JSON.parse(line.slice('const SNAP = '.length).replace(/;\s*$/, '')), fileName: file.name});
+        } catch (e) { reject(e); } };
+        return rd.readAsText(file);
+      }
+      rd.onload = () => { try {
+        const wb = XLSX.read(new Uint8Array(rd.result), {type: 'array', cellDates: false});
+        const fsheets = FK.map(k => FREQ[k].sheet);
+        const m = file.name.match(/(\d{2}-\d{2}-\d{4})/), asof = m ? m[1] : ddmmyyyy(new Date(file.lastModified));
+        if (fsheets.every(n => wb.Sheets[n])) {
+          const snap = {asof, source: file.name};
+          fsheets.forEach(n => { snap[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], {header: 1, raw: true, defval: null, blankrows: true}); });
+          const vd = wb.Sheets['Validation Data'];
+          snap.doers = vd ? XLSX.utils.sheet_to_json(vd, {header: 1, raw: true, defval: null, blankrows: false}).slice(2).map(r => r[1]).filter(x => !blank(x)) : [];
+          return resolve({snap, fileName: file.name});
+        }
+        for (const n of ['Master', 'Import', 'Current Tasks'].concat(wb.SheetNames)) {
+          const ws = wb.Sheets[n]; if (!ws) continue;
+          const aoa = XLSX.utils.sheet_to_json(ws, {header: 1, raw: true, defval: null, blankrows: false});
+          const h = aoa.findIndex(r => key((r || [])[0]) === 'action' || (n === 'Current Tasks' && key((r || [])[2]) === 'frequency'));
+          if (h < 0) continue;
+          let rows = aoa.slice(h);
+          if (n === 'Current Tasks') { const st = rows[0].indexOf('Status'); rows = [['Action'].concat(rows[0].slice(2, 30))].concat(rows.slice(1).filter(r => r[st] !== 'Deleted').map(r => [''].concat(r.slice(2, 30)))); }
+          const ds = wb.Sheets.Doers ? XLSX.utils.sheet_to_json(wb.Sheets.Doers, {header: 1, raw: false, blankrows: false}).map(r => r[0]).filter(x => x && !/^doers?$/i.test(String(x).trim())) : [];
+          return resolve({rows, doers: ds, asof, fileName: file.name});
+        }
+        throw new Error('No checklist found: expected the Daily / Weekly / Monthly / Yearly Task List sheets, or a sheet whose header row starts with "Action".');
+      } catch (e) { reject(e); } };
+      rd.readAsArrayBuffer(file);
+    });
+  }
+  async function uploadChecklist(file) {
+    let payload;
+    try { payload = await readUpload(file); } catch (e) { return showMsg('Cannot use this file', '<p>' + esc(e.message) + '</p>'); }
+    let dry;
+    try { dry = await api('POST', 'api/data/checklist', Object.assign({dry: true}, payload)); }
+    catch (e) { return showMsg('Cannot use this file', '<p>' + esc(e.message) + '</p>'); }
+    const f = o => ['Daily', 'Weekly', 'Monthly', 'Yearly'].map(k => k + ' ' + fmtN(o[k])).join(' · ');
+    const msg = 'Replace the checklist in Drive with "' + file.name + '"?\n\nNow: as of ' + (dry.nowAsof || '—') + ' · ' + fmtN(dry.nowTasks) + ' tasks (' + f(dry.now) + ')\nNew: as of ' + (dry.asof || '—') + ' · ' + fmtN(dry.tasks) + ' tasks (' + f(dry.next) + ')\n\n' +
+      'A copy of the current workbook is saved in the same Drive folder first. Users, requests, the change log and the audit log are kept.' +
+      (dry.approvedChanges ? ' ' + dry.approvedChanges + ' approved change record(s) belong to the current version; after the upload you will be offered to re-apply them.' : '');
+    if (!(await askConfirm(msg, 'Upload to Drive'))) return;
+    const btn = $('#dUpBtn'); btn.disabled = true; toast('Uploading to Drive…');
+    try {
+      const r = await api('POST', 'api/data/checklist', payload);
+      DATA = r.file; renderData();
+      showMsg('Checklist uploaded', '<p>The checklist as of <b>' + esc(r.asof) + '</b> (' + fmtN(r.tasks) + ' tasks) is now in Drive. A copy of the previous workbook was saved first.</p><p>Reload the page to work on the new version. Everyone else sees “The checklist was updated in Drive – reload”.</p>');
+    } catch (e) { showMsg('Upload failed', '<p>' + esc(e.message) + '</p><p class="muted small">Nothing was replaced.</p>'); }
+    finally { btn.disabled = false; }
   }
   async function exportAccess() {
     const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('Access Matrix');
@@ -655,6 +776,7 @@
   function wants(tb) {
     if (tb.closest('dialog') || tb.closest('.rp')) return {sort: !!tb.closest('dialog'), filter: false};
     if (tb.id === 'tTbl' || tb.closest('#dueList')) return {sort: true, filter: false};   // these already have their own filters
+    if (tb.closest('#tab-data')) return {sort: false, filter: false};                     // short information tables
     return {sort: true, filter: true};
   }
   function enhance(tb) {

@@ -64,11 +64,15 @@ async function api(url, {method = "GET", body, type, raw = false} = {}) {
 }
 
 const DRIVE = "https://www.googleapis.com/drive/v3/files/";
-const meta = id => api(`${DRIVE}${id}?supportsAllDrives=true&fields=id,name,mimeType,modifiedTime,md5Checksum,capabilities(canEdit)`);
+const meta = id => api(`${DRIVE}${id}?supportsAllDrives=true&fields=id,name,mimeType,modifiedTime,md5Checksum,parents,webViewLink,capabilities(canEdit)`);
 const download = id => api(`${DRIVE}${id}?alt=media&supportsAllDrives=true`, {raw: true});
 // Replaces the file's content, keeping its id, name, sharing and version history.
 const upload = (id, bytes, mimeType) => api(
   `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media&supportsAllDrives=true&fields=id,modifiedTime,md5Checksum`,
   {method: "PATCH", body: bytes, type: mimeType});
 
-module.exports = {accessToken, meta, download, upload, clientEmail: () => loadKey().client_email};
+// Copies a file (same folder unless parents is given). Used for the daily backup of the checklist workbook.
+const copy = (id, name, parents) => api(`${DRIVE}${id}/copy?supportsAllDrives=true&fields=id,name,webViewLink`,
+  {method: "POST", type: "application/json", body: JSON.stringify(parents ? {name, parents} : {name})});
+
+module.exports = {accessToken, meta, download, upload, copy, clientEmail: () => loadKey().client_email};

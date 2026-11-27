@@ -12,8 +12,9 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const {createStore} = require("./store.js");
-const {createAccess, SESSION_HOURS} = require("./access.js");
+const {createAccess, PERMS, SESSION_HOURS} = require("./access.js");
 const V = require("./visibility.js");
+const MF = require("./master-format.js");
 
 const CONFIG = {
   port: +process.env.PORT || 3000,
@@ -26,7 +27,7 @@ const COOKIE = "jc_session";
 const KINDS = {TRANSFER: "act.transfer", ADD: "act.add", EDIT: "act.edit", DELETE: "act.delete", IMPORT: "act.import"};
 const LIMITED = new Set(["/api/me", "/password", "/logout"]);   // all a person may do before changing a temporary password
 
-const store = createStore(CONFIG);
+const store = createStore({...CONFIG, extraSheets: (docs, source) => readableSheets(docs, source)});
 const access = createAccess(store);
 const file = name => fs.readFileSync(path.join(__dirname, "public", name));
 
@@ -68,6 +69,64 @@ function hint(e) {
   if (e.status === 403 && /has not been used|disabled/.test(e.message)) return "Enable the Google Drive API for the service account's Cloud project.";
   if (e.status === 403 || e.status === 404) return `Share "Job Checklist DB.xlsx" in Google Drive with ${email} as Editor.`;
   return "";
+}
+
+// ---------- readable copies in the workbook, rewritten on every save ----------
+// Users (no password data), Current Tasks (Master with approved changes applied) and the Audit Log.
+const ist = iso => iso ? new Date(new Date(iso).getTime() + 5.5 * 3600e3).toISOString().slice(0, 16).replace("T", " ") : "";
+function readableSheets(docs, source) {
+  const out = [];
+  const users = ((docs["acl/users"] || {}).users || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  out.push({name: "Users", widths: [24, 32, 10, 7, 8].concat(PERMS.map(() => 9), [11, 17, 17, 17, 17]),
+    aoa: [["Name", "Email (sign-in ID)", "Status", "Admin", "Scope"].concat(PERMS.map(p => p.group.replace(/ \(maker\)/, "") + ": " + p.label),
+      ["Password", "Created", "Updated", "Last sign-in", "Removed on"])].concat(users.map(u => [u.name || "", u.email,
+      u.removed ? "Removed" : u.active === false ? "Inactive" : "Active", u.admin ? "Yes" : "", u.admin ? "all" : (u.scope || "own")]
+      .concat(PERMS.map(p => (u.admin || (u.perms || {})[p.key]) ? "✓" : ""),
+        [u.mustChange ? "Temporary" : u.hash ? "Set" : "None", ist(u.created), ist(u.updated), ist(u.lastLogin), ist(u.removed)])))});
+  try {
+    const st = Object.keys(docs).filter(p => p.startsWith("st/")).sort().map(p => ({id: p.slice(3), data: docs[p]}));
+    if (source) out.push({name: "Current Tasks", aoa: MF.currentTasks(source, st),
+      widths: MF.CUR_HDR.map(h => h === "Task Description" ? 60 : h === "Task Alias" ? 30 : h === "Company" ? 28 : Math.max(8, h.length + 2))});
+  } catch (e) { console.error("Current Tasks sheet:", e.message); }
+  const au = Object.keys(docs).filter(p => p.startsWith("au/")).sort().flatMap(p => (docs[p] && docs[p].entries) || []);
+  out.push({name: "Audit Log", widths: [17, 24, 32, 26, 90],
+    aoa: [["When (IST)", "Who", "Email", "Action", "Details"]].concat(au.map(a => [ist(a.at), a.name || "", a.email || "", a.action, a.detail || ""]))});
+  return out;
+}
+
+// Append-only record of who did what (sign-ins, access changes, requests, checklist uploads). Kept month by month.
+async function audit(who, action, detail) {
+  const k = "au/" + new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 7);
+  const d = (await store.rawDoc(k)) || {entries: []};
+  d.entries.push({at: new Date().toISOString(), email: who ? who.email : "", name: who ? who.name : "", action, detail: String(detail || "").slice(0, 2000)});
+  await store.setDoc(k, d);
+}
+
+// ---------- a new checklist uploaded from the dashboard (admins) ----------
+const FREQ_COUNT = rows => { const c = {Daily: 0, Weekly: 0, Monthly: 0, Yearly: 0}; rows.slice(1).forEach(r => { if (c[r[1]] !== undefined) c[r[1]]++; }); return c; };
+const FREQ_NAMES = {d: "Daily", daily: "Daily", w: "Weekly", weekly: "Weekly", m: "Monthly", monthly: "Monthly", y: "Yearly", yearly: "Yearly", annual: "Yearly", annually: "Yearly"};
+function checklistFrom(b) {
+  let rows, doers, asof = String(b.asof || "").trim(), src = String(b.fileName || "").trim();
+  if (b.snap && typeof b.snap === "object") {
+    rows = MF.masterRows(b.snap); doers = MF.doersOf(b.snap);
+    asof = asof || b.snap.asof || ""; src = b.snap.source || src;
+  } else if (Array.isArray(b.rows)) {
+    const h = b.rows.findIndex(r => Array.isArray(r) && V.key(r[0]) === "action");
+    if (h < 0) throw bad('No header row starting with "Action" – use the Master / import layout');
+    const hdr = b.rows[h].map(V.key), ix = n => hdr.indexOf(V.key(n));
+    const missing = ["Frequency", "Doer", "Task Description"].filter(n => ix(n) < 0);
+    if (missing.length) throw bad("Missing column(s): " + missing.join(", "));
+    rows = [MF.HDR].concat(b.rows.slice(h + 1).filter(r => Array.isArray(r) && r.some(v => !MF.blank(v)))
+      .map(r => MF.HDR.map(n => { const i = ix(n); const v = i < 0 ? "" : r[i]; return v == null ? "" : v; })));
+    rows.slice(1).forEach(r => { r[1] = FREQ_NAMES[V.key(r[1])] || r[1]; });
+    doers = Array.isArray(b.doers) ? b.doers.map(String) : [];
+  } else throw bad("Nothing to upload");
+  if (rows.length < 2) throw bad("The file has no tasks");
+  const badF = rows.slice(1).filter(r => !["Daily", "Weekly", "Monthly", "Yearly"].includes(r[1]));
+  if (badF.length) throw bad(badF.length + " row(s) have no valid Frequency (Daily / Weekly / Monthly / Yearly)");
+  const names = new Set(doers.map(V.key));
+  rows.slice(1).forEach(r => { const d = String(r[2] || "").replace(/\s+/g, " ").trim(); if (d && !names.has(V.key(d))) { names.add(V.key(d)); doers.push(d); } });
+  return {rows, doers, asof, source: src};
 }
 
 // ---------- visibility (cached per checklist version + shared-state revision) ----------
@@ -118,6 +177,7 @@ async function createRequest(me, b) {
   const rq = {id, ref: "RQ-" + String(all.length + 1).padStart(4, "0"), at: new Date().toISOString(), by: {email: me.email, name: me.name},
     kind, summary: String(b.summary || "").slice(0, 500), entries: clean, adds, status: "pending"};
   await store.setDoc("rq/" + id, rq);
+  await audit(me, "Request sent", `${rq.ref} · ${kind} · ${clean.length} line(s) · ${rq.summary}`);
   return rq;
 }
 
@@ -142,6 +202,8 @@ async function decide(me, b) {
     rq.result = {batch: String(r.batch || ""), ok: +r.ok || 0, skipped: (Array.isArray(r.skipped) ? r.skipped : []).slice(0, 3000).map(s => ({task: String(s.task || ""), why: String(s.why || "")}))};
   }
   await store.setDoc("rq/" + rq.id, rq);
+  await audit(me, b.status === "approved" ? "Request approved" : "Request rejected", `${rq.ref} by ${rq.by && rq.by.name}` +
+    (rq.result ? ` · change ref ${rq.result.batch}, ${rq.result.ok} applied, ${rq.result.skipped.length} skipped` : "") + (rq.remark ? ` · remark: ${rq.remark}` : ""));
   return rq;
 }
 
@@ -151,6 +213,7 @@ async function cancel(me, b) {
   if (rq.status !== "pending") throw bad(`${rq.ref} is already ${rq.status}`, 409);
   rq.status = "cancelled"; rq.decidedAt = new Date().toISOString(); rq.decidedBy = {email: me.email, name: me.name};
   await store.setDoc("rq/" + rq.id, rq);
+  await audit(me, "Request withdrawn", rq.ref);
   return rq;
 }
 
@@ -168,7 +231,7 @@ async function handle(req, res) {
     if (!access.isEmail(email)) return json(res, 400, {error: "Sign in with your email address."});
     const u = await access.verify(email, b.password);
     if (!u) { access.failed(keys); return json(res, 401, {error: "Wrong email or password."}); }
-    access.cleared(keys); await access.touchLogin(u);
+    access.cleared(keys); await access.touchLogin(u); await audit(u, "Signed in", u.breakGlass ? "break-glass admin" : "");
     return json(res, 200, {ok: true, mustChange: !!u.mustChange}, {"set-cookie": setCookie(req, access.issue(u), SESSION_HOURS * 3600)});
   }
   if (p === "/logout") return json(res, 200, {ok: true}, {"set-cookie": setCookie(req, "", 0)});
@@ -187,6 +250,7 @@ async function handle(req, res) {
   if (p === "/password" && req.method === "POST") {
     const b = await bodyJson(req, 10_000);
     const u = await access.changeOwnPassword(me, b.current, b.next);
+    await audit(me, "Changed own password", me.mustChange ? "replaced the temporary password" : "");
     return json(res, 200, {ok: true}, {"set-cookie": setCookie(req, access.issue(u), SESSION_HOURS * 3600)});
   }
 
@@ -230,10 +294,53 @@ async function handle(req, res) {
   if (p.startsWith("/api/access")) {
     if (!me.admin) return json(res, 403, {error: "Admins only"});
     if (p === "/api/access" && req.method === "GET") return json(res, 200, await access.adminView());
-    if (p === "/api/access/users" && req.method === "POST") return json(res, 200, await access.addUser(await bodyJson(req, 50_000), me));
-    if (p === "/api/access/users" && req.method === "PUT") { await access.saveUsers((await bodyJson(req, 500_000)).users, me); return json(res, 200, await access.adminView()); }
-    if (p === "/api/access/users" && req.method === "DELETE") { await access.deleteUser(url.searchParams.get("email"), me); return json(res, 200, await access.adminView()); }
-    if (p === "/api/access/reset" && req.method === "POST") return json(res, 200, await access.resetPassword((await bodyJson(req, 10_000)).email, me));
+    if (p === "/api/access/users" && req.method === "POST") {
+      const b = await bodyJson(req, 50_000), r = await access.addUser(b, me);
+      await audit(me, "Person added", `${b.name} <${r.email}> · scope ${b.scope || "own"}`);
+      return json(res, 200, r);
+    }
+    if (p === "/api/access/users" && req.method === "PUT") {
+      const ch = await access.saveUsers((await bodyJson(req, 500_000)).users, me);
+      for (const c of ch) await audit(me, "Access changed", `${c.name} <${c.email}>: ${c.change}`);
+      return json(res, 200, await access.adminView());
+    }
+    if (p === "/api/access/users" && req.method === "DELETE") {
+      const r = await access.deleteUser(url.searchParams.get("email"), me);
+      await audit(me, "Person removed", `${r.name} <${r.email}> (kept on file; can be restored)`);
+      return json(res, 200, await access.adminView());
+    }
+    if (p === "/api/access/restore" && req.method === "POST") {
+      const r = await access.restoreUser((await bodyJson(req, 10_000)).email, me);
+      await audit(me, "Person restored", `${r.name} <${r.email}>`);
+      return json(res, 200, await access.adminView());
+    }
+    if (p === "/api/access/reset" && req.method === "POST") {
+      const r = await access.resetPassword((await bodyJson(req, 10_000)).email, me);
+      await audit(me, "Password reset", r.email);
+      return json(res, 200, r);
+    }
+  }
+
+  if (p.startsWith("/api/data")) {
+    if (!me.admin) return json(res, 403, {error: "Admins only"});
+    if (p === "/api/data" && req.method === "GET") return json(res, 200, await store.fileInfo());
+    if (p === "/api/data/reload" && req.method === "POST") {
+      const src = await store.reload();
+      await audit(me, "Reloaded from Drive", `checklist as of ${src.asof} · ${src.master.length - 1} rows`);
+      return json(res, 200, await store.fileInfo());
+    }
+    if (p === "/api/data/checklist" && req.method === "POST") {
+      const b = await bodyJson(req, 20_000_000);
+      const c = checklistFrom(b);
+      const cur = await store.source(false);
+      const approved = (await store.collection("st")).reduce((n, d) => n + ((d.data && d.data.items) || []).length, 0);
+      const summary = {asof: c.asof, source: c.source, tasks: c.rows.length - 1, now: FREQ_COUNT(cur.master), next: FREQ_COUNT(c.rows), doers: c.doers.length,
+        nowAsof: cur.asof, nowTasks: cur.master.length - 1, approvedChanges: approved};
+      if (b.dry) return json(res, 200, {dry: true, ...summary});
+      await store.replaceMaster(c);
+      await audit(me, "New checklist uploaded", `${c.source || "file"} · as of ${c.asof} · ${c.rows.length - 1} tasks (was ${cur.master.length - 1}, as of ${cur.asof}) · previous workbook copied in Drive first`);
+      return json(res, 200, {ok: true, ...summary, file: await store.fileInfo()});
+    }
   }
   send(res, 404, "text/plain", "Not found");
 }

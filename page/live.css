@@ -33,6 +33,8 @@ table.dt th.srt[data-dir="-1"]::after{content:' ▼'}
 .rq-act{white-space:nowrap}
 .rq-act .btn{margin:1px}
 #printHead{display:none}
+#cMsg{white-space:pre-line}
+#dataInfo a{color:var(--s1)}
 
 @page{size:A4 landscape;margin:9mm}
 @media print{

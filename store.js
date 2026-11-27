@@ -41,11 +41,13 @@ function requestRows(docs) {
 function backendFor({fileId, localFile}) {
   if (localFile) return {   // for testing without Drive
     name: localFile,
-    meta: async () => ({name: localFile, modifiedTime: fs.statSync(localFile).mtime.toISOString(), capabilities: {canEdit: true}}),
+    meta: async () => ({name: require("path").basename(localFile), modifiedTime: fs.statSync(localFile).mtime.toISOString(), capabilities: {canEdit: true}}),
     download: async () => fs.readFileSync(localFile),
+    copy: async name => { const p = require("path").join(require("path").dirname(localFile), name); fs.copyFileSync(localFile, p); return {id: p, name}; },
     upload: async bytes => { fs.writeFileSync(localFile, bytes); return {modifiedTime: fs.statSync(localFile).mtime.toISOString()}; },
   };
-  return {name: fileId, meta: () => g.meta(fileId), download: () => g.download(fileId), upload: bytes => g.upload(fileId, bytes, MIME)};
+  return {name: fileId, meta: () => g.meta(fileId), download: () => g.download(fileId), upload: bytes => g.upload(fileId, bytes, MIME),
+    copy: (name, parents) => g.copy(fileId, name, parents)};
 }
 
 const blank = v => v === null || v === undefined || String(v).trim() === "";
@@ -109,6 +111,19 @@ function createStore(opts) {
   let docs = {};
   let loading = null, lastCheck = 0;
   let seq = 0, savedSeq = 0, saving = false, timer = null, saveError = null, savedAt = null;
+  let pendingMaster = null, fileMeta = null;   // a new checklist waiting to be written into Master; last Drive metadata
+  const today = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);   // India date
+
+  // Copies the workbook as it is in Drive now, before it is overwritten: once a day, and before a new checklist replaces Master.
+  async function backup(m, why) {
+    if (!backend.copy) return;
+    const stamp = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 16).replace("T", " ").replace(":", "");
+    const base = String(m.name || "Job Checklist DB.xlsx").replace(/.xlsx$/i, "");
+    const name = why === "daily" ? `${base} – backup ${today()}.xlsx` : `${base} – before ${why} ${stamp}.xlsx`;
+    const r = await backend.copy(name, m.parents);
+    docs["bk/info"] = {day: why === "daily" ? today() : ((docs["bk/info"] || {}).day || ""), at: new Date().toISOString(), name, id: r.id || "", link: r.webViewLink || "", why};
+    seq++;
+  }
 
   async function fetchBook() {
     const m = await backend.meta();
@@ -154,8 +169,21 @@ function createStore(opts) {
       const m = await backend.meta();
       let buf = book.buf;
       if (m.modifiedTime !== book.modifiedTime) buf = await backend.download();   // someone edited it in Drive: keep their edit
+      fileMeta = m;
+      const pm = pendingMaster;
+      if (pm) await backup(m, "upload");
+      else if (((docs["bk/info"] || {}).day || "") !== today()) await backup(m, "daily").catch(e => console.error("Daily backup failed:", e.message));
       const wb = XLSX.read(buf, {type: "buffer", cellNF: true, cellStyles: true});
+      if (pm) {
+        setSheet(wb, "Master", pm.rows, pm.rows[0].map(h => h === "Task Description" ? 60 : h === "Task Alias" ? 30 : h === "Company" ? 28 : Math.max(8, String(h).length + 2)));
+        setSheet(wb, "Doers", [["Doer"]].concat(pm.doers.map(x => [x])), [28]);
+        const set = wb.Sheets.Settings ? XLSX.utils.sheet_to_json(wb.Sheets.Settings, {header: 1, raw: false, defval: "", blankrows: false}) : [["Key", "Value", "Notes"]];
+        const put = (k, v) => { const r = set.find(x => String(x[0]).trim().toLowerCase() === k.toLowerCase()); if (r) r[1] = v; else set.push([k, v, ""]); };
+        put("AsOf", pm.asof || ""); put("Source", pm.source || "");
+        setSheet(wb, "Settings", set, [14, 50, 60]);
+      }
       source = readSource(wb, m.name);
+      for (const x of (opts.extraSheets ? opts.extraSheets(docs, source) : [])) setSheet(wb, x.name, x.aoa, x.widths);
       setSheet(wb, "State", stateRows(docs, docs["meta/info"] || {}), [40, 60]);
       setSheet(wb, "Change Log", logRows(docs), LOG_COLS.map(([h]) => h === "Task" ? 60 : Math.max(12, h.length + 2)));
       setSheet(wb, "Requests", requestRows(docs), RQ_COLS.map(h => h === "Summary" ? 70 : Math.max(12, h.length + 2)));
@@ -163,11 +191,13 @@ function createStore(opts) {
       const r = await backend.upload(out);
       book.buf = out; book.modifiedTime = r.modifiedTime || book.modifiedTime;
       savedSeq = target; saveError = null; savedAt = new Date().toISOString();
+      if (pm && pendingMaster === pm) { pendingMaster = null; pm.done(); }
     } catch (e) {
       saveError = e.status === 403 || e.status === 404
         ? `Could not save to Drive: share "${book && book.name}" with ${safeEmail()} as Editor (${e.message})`
         : `Could not save to Drive: ${e.message}`;
       console.error(saveError);
+      if (pendingMaster) { const pm = pendingMaster; pendingMaster = null; pm.fail(new Error(saveError)); }
       schedule(15000);
     } finally {
       saving = false;
@@ -185,6 +215,25 @@ function createStore(opts) {
       return {doc: docs["meta/info"] || null, ver: source && source.ver, canEdit: book ? book.canEdit : null,
         pending: seq !== savedSeq, saveError, savedAt};
     },
+    // For the admin's Data tab.
+    async fileInfo() {
+      await ensureLoaded();
+      const m = fileMeta || await backend.meta().catch(() => ({}));
+      fileMeta = m;
+      return {name: m.name || book.name, id: opts.fileId || "", link: m.webViewLink || (opts.fileId ? `https://drive.google.com/file/d/${opts.fileId}/view` : ""),
+        modifiedTime: m.modifiedTime || book.modifiedTime, asof: source && source.asof, source: source && source.source, tasks: source ? source.master.length - 1 : 0,
+        pending: seq !== savedSeq, saveError, savedAt, backup: docs["bk/info"] || null, local: !!opts.localFile};
+    },
+    // Replaces Master, Doers and AsOf / Source with a new checklist (rows in the Master layout). A copy of the
+    // workbook is saved in the same Drive folder first. Resolves once Drive has the new version.
+    async replaceMaster(pm) {
+      await ensureLoaded();
+      if (pendingMaster) throw Object.assign(new Error("Another checklist upload is still being saved – try again in a minute"), {status: 409});
+      const p = new Promise((done, fail) => { pendingMaster = {...pm, done, fail}; });
+      seq++; clearTimeout(timer); flush();
+      return p;
+    },
+    async reload() { await checkFresh(true); return source; },
     async collection(name) {
       await ensureLoaded();
       return Object.keys(docs).filter(p => p.startsWith(name + "/")).sort().map(p => ({id: p.slice(name.length + 1), data: docs[p]}));

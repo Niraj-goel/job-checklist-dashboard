@@ -87,7 +87,7 @@ function createAccess(store) {
     const e = norm(email);
     if (ADMIN.email && ADMIN.password && e === ADMIN.email && same(pw, ADMIN.password)) return breakGlass();
     const u = await find(e);
-    if (!u || u.active === false || !u.hash) { hashPw(pw, "x"); return null; }   // same work either way
+    if (!u || u.active === false || u.removed || !u.hash) { hashPw(pw, "x"); return null; }   // same work either way
     return same(hashPw(pw, u.salt), u.hash) ? u : null;
   }
 
@@ -108,7 +108,7 @@ function createAccess(store) {
     const stored = await find(email);
     const cands = [u, stored].filter(Boolean);
     for (const c of cands) {
-      if (c.active === false) continue;
+      if (c.active === false || c.removed) continue;
       const want = crypto.createHmac("sha256", secret()).update(`${em}|${exp}|${c.stamp}`).digest("base64url");
       if (same(sig, want)) return c;
     }
@@ -124,7 +124,7 @@ function createAccess(store) {
   // ---- admin ----
   const publicUser = u => ({email: u.email, name: u.name || "", admin: !!u.admin, active: u.active !== false,
     scope: SCOPES.includes(u.scope) ? u.scope : "own", perms: u.perms || {}, mustChange: !!u.mustChange,
-    hasPassword: !!u.hash, lastLogin: u.lastLogin || "", updated: u.updated || ""});
+    hasPassword: !!u.hash, lastLogin: u.lastLogin || "", updated: u.updated || "", created: u.created || "", removed: u.removed || ""});
   async function adminView() {
     const s = await state();
     return {perms: PERMS, scopes: SCOPES, newUser: NEW_USER, users: s.users.map(publicUser),
@@ -152,7 +152,8 @@ function createAccess(store) {
     const s = await state();
     const email = norm(b.email);
     if (!isEmail(email)) throw bad("Enter a valid email address as the sign-in ID");
-    if (s.users.some(x => norm(x.email) === email)) throw bad(`${email} already exists`);
+    const ex = s.users.find(x => norm(x.email) === email);
+    if (ex) throw bad(ex.removed ? `${email} was removed earlier – use Restore on that row` : `${email} already exists`);
     const u = {email, created: new Date().toISOString()};
     applyRow(u, {...NEW_USER, ...b}, actor);
     const pw = setTemp(u);
@@ -160,10 +161,27 @@ function createAccess(store) {
     return {email, password: pw};
   }
 
+  // What changed in one person's row, in words (for the audit log).
+  function describe(a, b) {
+    const out = [];
+    if (a.email !== b.email) out.push(`email ${a.email} → ${b.email}`);
+    if ((a.name || "") !== (b.name || "")) out.push(`name "${a.name || ""}" → "${b.name}"`);
+    if ((a.active !== false) !== (b.active !== false)) out.push(b.active !== false ? "activated" : "deactivated");
+    if (!!a.admin !== !!b.admin) out.push(b.admin ? "made admin" : "admin removed");
+    if ((a.scope || "own") !== (b.scope || "own")) out.push(`scope ${a.scope || "own"} → ${b.scope}`);
+    const label = k => (PERMS.find(p => p.key === k) || {label: k}).label;
+    const pa = a.perms || {}, pb = b.perms || {};
+    const on = PERMS.filter(p => pb[p.key] && !pa[p.key]).map(p => label(p.key)), off = PERMS.filter(p => pa[p.key] && !pb[p.key]).map(p => label(p.key));
+    if (on.length) out.push("ticked: " + on.join(", "));
+    if (off.length) out.push("unticked: " + off.join(", "));
+    return out.join("; ");
+  }
+
   async function saveUsers(rows, actor) {
     const s = await state();
     if (!Array.isArray(rows)) throw bad("No users sent");
     const next = s.users.map(u => ({...u}));
+    const before = new Map(s.users.map(u => [u, JSON.parse(JSON.stringify(u))]));
     for (const b of rows) {
       const u = next.find(x => norm(x.email) === norm(b.email));
       if (!u) throw bad(`No such user: ${b.email}`);
@@ -176,25 +194,40 @@ function createAccess(store) {
       }
       applyRow(u, b, actor);
     }
-    if (!next.some(u => u.admin && u.active !== false) && !ADMIN.email) throw bad("Keep at least one active admin");
+    if (!next.some(u => u.admin && u.active !== false && !u.removed) && !ADMIN.email) throw bad("Keep at least one active admin");
+    const changes = [];
+    s.users.forEach((u, i) => { const d = describe(before.get(u), next[i]); if (d) changes.push({email: next[i].email, name: next[i].name, change: d}); });
     s.users = next; await persist();
+    return changes;
   }
 
   async function resetPassword(email, actor) {
     const s = await state();
     const u = s.users.find(x => norm(x.email) === norm(email));
     if (!u) throw bad("No such user");
+    if (u.removed) throw bad("Restore this person first");
     const pw = setTemp(u); u.updated = new Date().toISOString();
     await persist();
     return {email: u.email, password: pw};
   }
 
+  // People are never deleted: "remove" switches them off and marks the date, and Restore brings them back.
   async function deleteUser(email, actor) {
     const s = await state();
-    if (norm(email) === norm(actor.email)) throw bad("You can't delete yourself");
-    const i = s.users.findIndex(x => norm(x.email) === norm(email));
-    if (i < 0) throw bad("No such user");
-    s.users.splice(i, 1); await persist();
+    if (norm(email) === norm(actor.email)) throw bad("You can't remove yourself");
+    const u = s.users.find(x => norm(x.email) === norm(email));
+    if (!u) throw bad("No such user");
+    u.removed = new Date().toISOString(); u.active = false; u.updated = u.removed;
+    await persist();
+    return {email: u.email, name: u.name};
+  }
+  async function restoreUser(email, actor) {
+    const s = await state();
+    const u = s.users.find(x => norm(x.email) === norm(email));
+    if (!u) throw bad("No such user");
+    delete u.removed; u.active = true; u.updated = new Date().toISOString();
+    await persist();
+    return {email: u.email, name: u.name};
   }
 
   async function changeOwnPassword(actor, current, next) {
@@ -232,10 +265,10 @@ function createAccess(store) {
     return out;
   }
 
-  async function anyUsers() { return (await state()).users.some(u => u.active !== false) || !!(ADMIN.email && ADMIN.password); }
+  async function anyUsers() { return (await state()).users.some(u => u.active !== false && !u.removed) || !!(ADMIN.email && ADMIN.password); }
 
   return {PERMS, verify, view, issue, check, throttled, failed, cleared, adminView, addUser, saveUsers, resetPassword,
-    deleteUser, changeOwnPassword, touchLogin, seed, anyUsers, isEmail};
+    deleteUser, restoreUser, changeOwnPassword, touchLogin, seed, anyUsers, isEmail};
 }
 
-module.exports = {createAccess, PERMS, SESSION_HOURS};
+module.exports = {createAccess, PERMS, SCOPES, SESSION_HOURS};
